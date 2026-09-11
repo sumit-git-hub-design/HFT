@@ -1,0 +1,135 @@
+# TCP Module — Simple Structure
+
+Ye code **Verilog (Hardware Description Language)** me likha gaya hai. Iska use FPGA/ASIC chip design me hota hai — yaani ye "software" nahi, balki **hardware ka blueprint** hai. Is module ka naam `TCP` hai, aur ye ek **network card (NIC)** ke andar baithkar TCP/IP packets bhejta aur check karta hai (jaise ek chhota network engine).
+
+Pehle 2 basic cheezein samajh lo:
+- **`wire`** = ek taar jisme signal continuously flow karta hai (jaise pipe me pani).
+- **`reg`** = ek storage jo clock ke pulse pe value yaad rakhta hai (jaise ek chhoti memory cell).
+- **`always@(posedge clk)`** = "jab bhi clock tick ho, ye kaam karo" — yani hardware ka ek chhota loop/step.
+
+---
+
+## 1. Module Ka Kaam (Big Picture)
+
+Simple shabdon me: ye module network se aane wale data (**RX**) ko padhta hai, use verify karta hai, aur phir apna khud ka TCP connection bana kar data bhejta hai (**TX**) — jisme optional **encryption (AES-GCM)** bhi laga sakta hai.
+
+```
+[Network RX] --> [TCP/IP/Ethernet Header Check] --> [State Machine: Connect/Send/Close]
+                                                              |
+                                                              v
+[Encryption Engine (AES-GCM)] <-- [Packet Builder] --> [Network TX to NIC]
+```
+
+---
+
+## 2. Inputs/Outputs Ke Groups
+
+| Group | Kya karte hain |
+|---|---|
+| **Control signals** (`tach_srcPort`, `tach_destIp`, `tach_srcMac`, etc.) | Ye batate hain kaunse Source/Destination IP, Port, MAC address use karne hain — jaise "letter pe address likhna" |
+| **Network RX ports** (`net_rx_data`, `net_rx_sof`, `net_rx_eof`...) | Incoming data padhne ke liye — SOF = Start of Frame, EOF = End of Frame |
+| **Network TX ports** (`net_tx_data`, `net_tx_sof`...) | Outgoing data bhejne ke liye |
+| **Status outputs** (`tcpValid`, `self_seq_out`, `retransmission_out`...) | Debug/monitoring ke liye — TCP sequence number, kitne packets missed hue, etc. |
+| **Encryption ports** (`cipherKey`, `cipher_counter`, `gcm_key_counter`) | AES-GCM encryption engine ko key aur counter dene ke liye |
+| **FIFO/Queue ports** (`networkDataIn`, `networkData_push`, `trigger`) | Bahar se data is module ko dene ke liye, jise ye TCP packet bana ke bhejega |
+
+---
+
+## 3. Functional Blocks (Step-by-Step)
+
+### Block A — Ethernet Header Banana
+```verilog
+wire[111:0] ethHdr = {16'h0008, srcMac, destMac};
+```
+Ethernet ka sabse chhota header — bas source aur destination MAC address jodkar bana diya. Socho ye ek **envelope ka address label** hai.
+
+### Block B — IP Header Banana + Checksum
+- `ipHdr` wire me IP header ke saare fields jode jaate hain (source IP, dest IP, length, protocol=TCP).
+- `chksumip()` function IP header ka **checksum** calculate karta hai — ye ek error-checking number hota hai (jaise UPI transaction me OTP verify hota hai, waise hi checksum data ki correctness verify karta hai).
+- `prepareIp` ek chhota **state machine** (0→1→2→3) hai jo step-by-step header taiyar karta hai.
+
+### Block C — Incoming Packet Check (RX Validation)
+Ye part net se aane wale packet ko byte-by-byte parse karta hai (`data_counter` gin ke) aur check karta hai:
+1. Kya ye Ethernet+IP hai? (`eth_proto_recv == 16'h0008`)
+2. Kya protocol TCP hai?
+3. Kya IP address match karta hai? (`tcpValid2`)
+4. Kya Port match karta hai? (`tcpValid3`)
+
+Agar sab match kare, tabhi `tcpValid` signal `1` hota hai — matlab "haan ye packet mere liye valid hai".
+
+### Block D — TCP State Machine (Sabse Important Part)
+`tcp_state` naam ka reg TCP connection ka current status store karta hai:
+
+| State | Matlab |
+|---|---|
+| `00` CLOSED | Koi connection nahi |
+| `01` CONNECTING | SYN bhej diya, ACK ka wait |
+| `10` CONNECTED | Handshake complete, data bhej sakte hain |
+| `11` CLOSING | Connection band kar rahe hain (RST bhejte hain) |
+
+Ye bilkul waisa hi hai jaisa aap Computer Networks me **TCP 3-way handshake** padhte ho:
+```
+Client -> SYN -> Server
+Client <- SYN-ACK <- Server
+Client -> ACK -> Server   (ab CONNECTED)
+```
+
+### Block E — Sequence Number & Acknowledgement Tracking
+- `self_seq` = apna sequence number (kitna data bheja)
+- `host_seq_acked` = doosri taraf se kitna data receive confirm hua
+- `retransmit` counter batata hai agar same ACK baar-baar aaye (matlab packet loss ho sakta hai, isliye dobara bhejna padega)
+
+### Block F — Data Sending Logic (TX Path)
+- `networkDataIn` FIFO se data aata hai.
+- `sendData` register me store hota hai.
+- Jab TCP CONNECTED ho, tab `payloadData` bana ke actual packet compose hota hai (`net_pkt_data`).
+- Final packet `nic_send` / `nic_send_host` sub-module ko diya jata hai jo use physically NIC pe bhejta hai.
+
+### Block G — Encryption (AES-GCM)
+```verilog
+aes_gcm_xor gcm_xor(...)
+```
+Ye ek alag sub-module hai jo payload ko **AES-GCM algorithm** se encrypt karta hai, taaki bheja gaya data secure rahe (jaise HTTPS me data encrypt hota hai). Ye extra security layer hai — bina isse bhi TCP kaam karega, bas data plain-text jaayega.
+
+### Block H — Counters/Utility Functions
+- `chksumip()` — IP checksum nikalta hai
+- `ChangeEndian_16/32()` — byte order badalte hain (Big-endian ↔ Little-endian, kyunki network aur computer memory me byte order alag hota hai)
+
+---
+
+## 4. Poore Flow Ka Summary (Ek Line Me Har Step)
+
+1. **RX**: Network se packet aata hai → parse hota hai → valid TCP packet hai ya nahi check hota hai.
+2. **State Machine**: Agar connect karna hai, SYN bhejo → SYN-ACK aaye to ACK bhejo → CONNECTED.
+3. **Data Queue**: User FIFO me data daalta hai (`networkData_push`).
+4. **Header Build**: Ethernet + IP + TCP headers banaye jaate hain, checksum lagaya jata hai.
+5. **(Optional) Encrypt**: AES-GCM se payload encrypt hota hai.
+6. **TX**: Poora packet NIC ke through network pe bhej diya jata hai.
+7. **ACK Tracking**: Har reply ka sequence number check hota hai, agar match na ho to retransmit counter badhta hai.
+
+---
+
+## 5. Class Me Samjhane Ke Liye Analogy
+
+Isko ek **post office system** jaisa samjhao:
+- Ethernet header = **Courier ka address label**
+- IP header = **Pin code jaisa routing info**
+- TCP handshake = **Pehle call karke confirm karna "tum ghar par ho?"** (SYN → SYN-ACK → ACK)
+- Sequence number = **Parcel ka tracking number**
+- Checksum = **Parcel seal check karna, kahin toot to nahi gaya**
+- AES-GCM encryption = **Parcel ko lock karke bhejna taaki beech me koi khol na sake**
+
+---
+
+## 6. Quick Glossary
+
+| Term | Simple Meaning |
+|---|---|
+| `posedge clk` | Clock ka "tick" — har tick pe hardware ek step aage badhta hai |
+| `parameter` | Ek constant value jo module banate waqt set hoti hai (jaise function ka default argument) |
+| SOF/EOF | Frame ka shuru/khatam batana |
+| FIFO | "First In First Out" queue — jaise line me lagna |
+| Checksum | Error-detect karne ka number |
+| Endianness | Byte order — bada byte pehle ya chhota byte pehle |
+
+Agar chaho to me isko PowerPoint slides ya ek diagram (block diagram / TCP state machine flow) bana ke bhi de sakta hoon — bata do.
