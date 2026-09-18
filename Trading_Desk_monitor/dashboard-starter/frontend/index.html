@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Desk Monitor</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --border: #0000FF;
+    --text: #d8dee6;
+    --text-dim: #7a8496;
+    --up: #3fb97a;
+    --down: #e0664f;
+    --amber: #d9a441;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    padding: 32px;
+  }
+  h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin: 0 0 4px 0;
+    color: var(--text);
+  }
+  .conn-status {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 24px;
+  }
+  .conn-status.live { color: var(--up); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    max-width: 760px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 18px;
+  }
+  .panel .label {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+  .panel .value {
+    font-size: 26px;
+    font-variant-numeric: tabular-nums;
+  }
+  .value.up { color: var(--up); }
+  .value.down { color: var(--down); }
+  .risk-row {
+    max-width: 760px;
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+  }
+  .risk-state {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--up);
+  }
+  .dot.tripped { background: var(--down); }
+  button {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: #1c2330;
+    color: var(--text);
+    cursor: pointer;
+  }
+  button.kill { border-color: var(--down); color: var(--down); }
+  button.kill:hover { background: rgba(224, 102, 79, 0.12); }
+  button.clear { border-color: var(--up); color: var(--up); }
+  button.clear:hover { background: rgba(63, 185, 122, 0.12); }
+</style>
+</head>
+<body>
+
+  <h1>DESK MONITOR</h1>
+  <div id="connStatus" class="conn-status">connecting…</div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="label">Last price</div>
+      <div class="value" id="price">—</div>
+    </div>
+    <div class="panel">
+      <div class="label">Position (qty)</div>
+      <div class="value" id="position">—</div>
+    </div>
+    <div class="panel">
+      <div class="label">PnL</div>
+      <div class="value" id="pnl">—</div>
+    </div>
+  </div>
+
+  <div class="risk-row">
+    <div class="risk-state">
+      <div class="dot" id="riskDot"></div>
+      <span id="riskLabel">Trading enabled</span>
+    </div>
+    <div>
+      <button class="kill" onclick="engageKillSwitch()">Engage kill switch</button>
+      <button class="clear" onclick="clearKillSwitch()">Clear</button>
+    </div>
+  </div>
+
+<script>
+  const BACKEND_HTTP = "http://127.0.0.1:8000";
+  const BACKEND_WS = "ws://127.0.0.1:8000/ws";
+
+  let lastPrice = null;
+  const socket = new WebSocket(BACKEND_WS);
+
+  socket.onopen = () => {
+    document.getElementById("connStatus").textContent = "live";
+    document.getElementById("connStatus").classList.add("live");
+  };
+
+  socket.onclose = () => {
+    document.getElementById("connStatus").textContent = "disconnected — is the backend running?";
+    document.getElementById("connStatus").classList.remove("live");
+  };
+
+  socket.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.type !== "state_update") return;
+
+    const priceEl = document.getElementById("price");
+    priceEl.textContent = data.price.toFixed(2);
+    if (lastPrice !== null) {
+      priceEl.classList.toggle("up", data.price > lastPrice);
+      priceEl.classList.toggle("down", data.price < lastPrice);
+    }
+    lastPrice = data.price;
+
+    document.getElementById("position").textContent = data.position_qty;
+
+    const pnlEl = document.getElementById("pnl");
+    pnlEl.textContent = (data.pnl >= 0 ? "+" : "") + data.pnl.toFixed(2);
+    pnlEl.classList.toggle("up", data.pnl >= 0);
+    pnlEl.classList.toggle("down", data.pnl < 0);
+
+    const dot = document.getElementById("riskDot");
+    const label = document.getElementById("riskLabel");
+    dot.classList.toggle("tripped", data.kill_switch_engaged);
+    label.textContent = data.kill_switch_engaged
+      ? "Kill switch engaged — trading halted"
+      : "Trading enabled";
+  };
+
+  async function engageKillSwitch() {
+    await fetch(`${BACKEND_HTTP}/kill-switch/engage`, { method: "POST" });
+  }
+
+  async function clearKillSwitch() {
+    await fetch(`${BACKEND_HTTP}/kill-switch/clear`, { method: "POST" });
+  }
+</script>
+</body>
+</html>
