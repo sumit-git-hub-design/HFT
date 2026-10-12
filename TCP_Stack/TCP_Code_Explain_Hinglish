@@ -26,12 +26,12 @@ Simple shabdon me: ye module network se aane wale data (**RX**) ko padhta hai, u
 
 | Group | Kya karte hain |
 |---|---|
-| **Control signals** (`tach_srcPort`, `tach_destIp`, `tach_srcMac`, etc.) | Ye batate hain kaunse Source/Destination IP, Port, MAC address use karne hain — jaise "letter pe address likhna" |
-| **Network RX ports** (`net_rx_data`, `net_rx_sof`, `net_rx_eof`...) | Incoming data padhne ke liye — SOF = Start of Frame, EOF = End of Frame |
-| **Network TX ports** (`net_tx_data`, `net_tx_sof`...) | Outgoing data bhejne ke liye |
-| **Status outputs** (`tcpValid`, `self_seq_out`, `retransmission_out`...) | Debug/monitoring ke liye — TCP sequence number, kitne packets missed hue, etc. |
-| **Encryption ports** (`cipherKey`, `cipher_counter`, `gcm_key_counter`) | AES-GCM encryption engine ko key aur counter dene ke liye |
-| **FIFO/Queue ports** (`networkDataIn`, `networkData_push`, `trigger`) | Bahar se data is module ko dene ke liye, jise ye TCP packet bana ke bhejega |
+| **Control signals**   | Ye batate hain kaunse Source/Destination IP, Port, MAC address use karne hain — jaise "letter pe address likhna" |
+| **Network RX ports**  (`net_rx_data`, `net_rx_sof`, `net_rx_eof`...) | Incoming data padhne ke liye — SOF = Start of Frame, EOF = End of Frame |
+| **Network TX ports**  (`net_tx_data`, `net_tx_sof`...) | Outgoing data bhejne ke liye |
+| **Status outputs**    | Debug/monitoring ke liye — TCP sequence number, kitne packets missed hue, etc. |
+| **Encryption ports**  | AES-GCM encryption engine ko key aur counter dene ke liye |
+| **FIFO/Queue ports**  | Bahar se data is module ko dene ke liye, jise ye TCP packet bana ke bhejega |
 
 ---
 
